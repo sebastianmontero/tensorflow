@@ -59,6 +59,7 @@ def train_model(learning_rate, steps, batch_size, training_examples, training_ta
     my_label = 'median_house_value'
    
     feature_columns = construct_feature_columns(training_examples)
+    print(feature_columns)
     
     optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
     optimizer = tf.contrib.estimator.clip_gradients_by_norm(optimizer, 5.0)
@@ -96,6 +97,17 @@ def train_model(learning_rate, steps, batch_size, training_examples, training_ta
     plt.show()
     return linear_regressor
 
+def bin_latitude (latitude, min, bins):
+    bins = [0] * bins;
+    bins[math.floor(latitude) - min] = 1
+    return bins
+
+def select_and_transform_features(source_df):
+    selected_examples = pd.DataFrame()
+    selected_examples['median_income'] = source_df['median_income']
+    for r in LATITUDE_RANGES:
+        selected_examples['lat_range_{}_to_{}'.format(r[0], r[1])] = source_df['latitude'].apply(lambda l: 1.0 if l >= r[0] and l < r[1] else 0.0)
+    return selected_examples
     
 
 tf.logging.set_verbosity(tf.logging.ERROR)
@@ -116,18 +128,31 @@ correlation_dataframe['target'] = training_targets['median_house_value']
 correlation_matrix = correlation_dataframe.corr();
 print(correlation_matrix)
 
+lat_start = math.floor(california_housing_dataframe['latitude'].min())
+lat_end = math.ceil(california_housing_dataframe['latitude'].max())
+LATITUDE_RANGES = zip(range(lat_start, lat_end - 1), range(lat_start + 1, lat_end))
+
+selected_training_examples = select_and_transform_features(training_examples)
+selected_validation_examples = select_and_transform_features(validation_examples)
+
+print(selected_training_examples.describe())
+print(selected_validation_examples)
+
+#plt.hist(training_examples['latitude'], 10)
+#plt.show();
 
 
-'''linear_regressor = train_model(learning_rate = 0.00002, steps=600, batch_size=10, training_examples=training_examples, training_targets=training_targets, validation_examples=validation_examples, validation_targets=validation_targets)
+
+linear_regressor = train_model(learning_rate = 0.00002, steps=600, batch_size=10, training_examples=selected_training_examples, training_targets=training_targets, validation_examples=selected_validation_examples, validation_targets=validation_targets)
 
 california_housing_test_data = pd.read_csv("https://storage.googleapis.com/mledu-datasets/california_housing_test.csv", sep=",")
 
 test_examples = preprocess_features(california_housing_test_data)
 test_targets = preprocess_targets(california_housing_test_data)
-predict_test_input_fn = lambda: my_input_fn(test_examples, test_targets, shuffle=False, num_epochs=1)
+selected_test_examples = select_and_transform_features(test_examples)
+predict_test_input_fn = lambda: my_input_fn(selected_test_examples, test_targets, shuffle=False, num_epochs=1)
 
 test_predictions = linear_regressor.predict(input_fn=predict_test_input_fn)
 test_predictions = predictions_to_numpy_array(test_predictions)
 test_rmse = calculate_root_mean_squared_error(test_predictions, test_targets)
 print("Root Mean squared error for the test set: {:.3f} ".format(test_rmse))
-'''
