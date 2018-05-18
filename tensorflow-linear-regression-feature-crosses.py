@@ -1,5 +1,8 @@
-import math
 
+import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+import math
 from IPython import display
 from matplotlib import cm
 from matplotlib import gridspec
@@ -57,7 +60,8 @@ def construct_feature_columns(training_examples):
     bucketized_housing_median_age = tf.feature_column.bucketized_column(housing_median_age, get_quantile_based_boundry(training_examples['housing_median_age'], 7))
     bucketized_median_income = tf.feature_column.bucketized_column(median_income, get_quantile_based_boundry(training_examples['median_income'], 7))
     bucketized_rooms_per_person = tf.feature_column.bucketized_column(rooms_per_person, get_quantile_based_boundry(training_examples['rooms_per_person'], 5))
-    return set([bucketized_households, bucketized_longitude, bucketized_latitude, bucketized_housing_median_age, bucketized_median_income, bucketized_rooms_per_person])
+    longitude_x_latitude = tf.feature_column.crossed_column([bucketized_longitude, bucketized_latitude], 1000)
+    return set([bucketized_households, longitude_x_latitude, bucketized_housing_median_age, bucketized_median_income, bucketized_rooms_per_person])
 
 def predictions_to_numpy_array(predictions):
     return np.array([item['predictions'][0] for item in predictions])
@@ -164,7 +168,7 @@ LATITUDE_RANGES = list(zip(range(lat_start, lat_end - 1), range(lat_start + 1, l
 
 
 
-linear_regressor = train_model(learning_rate = 1.0, steps=500, batch_size=10, training_examples=training_examples, training_targets=training_targets, validation_examples=validation_examples, validation_targets=validation_targets)
+linear_regressor = train_model(learning_rate = 1.0, steps=500, batch_size=50, training_examples=training_examples, training_targets=training_targets, validation_examples=validation_examples, validation_targets=validation_targets)
 
 california_housing_test_data = pd.read_csv("https://storage.googleapis.com/mledu-datasets/california_housing_test.csv", sep=",")
 
