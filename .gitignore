@@ -1,2 +1,5 @@
 /WEB-INF/classes/
 /db/hsqldb/
+*save*
+*checkpoint*
+*__pycache__*
