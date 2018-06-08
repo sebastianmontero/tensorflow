@@ -14,12 +14,13 @@ import language_modeling_reader
 import language_modeling_utils
 
 from tensorflow.python.client import device_lib
+from tensorflow.python.debug.wrappers.hooks import TensorBoardDebugHook
 
 flags = tf.flags
 
 flags.DEFINE_string('model', 'small', "A type of model. Possible options are: small, medium, large.")
 flags.DEFINE_string('data_path', '/home/nishilab/Documents/python/virtual-envs/tensorflow/tensorflow-exercises/data', "Where the training/test data is stored.")
-flags.DEFINE_string('save_path', '/home/nishilab/Documents/python/virtual-envs/tensorflow/tensorflow-exercises/data/save', "Model output directory")
+flags.DEFINE_string('save_path', '/home/nishilab/Documents/python/model-storage/language-modeling/save', "Model output directory")
 flags.DEFINE_bool('use_fp16', False, "Train using 16 bits floats instead of 32 bits")
 flags.DEFINE_integer('num_gpus', 1, 
                      "If larger than 1, Grappler AutoParallel optimizer "
@@ -138,7 +139,6 @@ class PTBModel(object):
         raise ValueError('rnn mode {} not supported'.format(config.rnn_mode))
     
     def _build_rnn_graph_lstm(self, inputs, config, is_training):
-        
         def make_cell():
             cell = self._get_lstm_cell(config, is_training)
             if is_training and config.keep_prob < 1:
@@ -149,16 +149,20 @@ class PTBModel(object):
             [make_cell() for _ in range(config.num_layers)], state_is_tuple=True)
         
         self._initial_state = cell.zero_state(config.batch_size, data_type())
-        state = self._initial_state
+        #state = self._initial_state
         
-        outputs = []
+        inputs = tf.unstack(inputs, num=self.num_steps, axis=1)
+        outputs, state = tf.nn.static_rnn(cell, inputs, initial_state=self._initial_state)
+        output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
+        return output, state
+        '''outputs = []
         with tf.variable_scope('RNN'):
             for time_step in range(self.num_steps):
                 if time_step > 0: tf.get_variable_scope().reuse_variables()
                 (cell_output, state) = cell(inputs[:, time_step, :], state)
                 outputs.append(cell_output)
             output = tf.reshape(tf.concat(outputs, 1), [-1, config.hidden_size])
-            return output, state            
+            return output, state'''            
         
     def assign_lr(self, session, lr_value):
         session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
@@ -412,9 +416,14 @@ def main(_):
         tf.train.import_meta_graph(metagraph)
         for model in models.values():
             model.import_ops()
-        sv = tf.train.Supervisor(logdir=FLAGS.save_path)
         config_proto = tf.ConfigProto(allow_soft_placement=soft_placement)
-        with sv.managed_session(config=config_proto) as session:
+        hooks = [
+            #TensorBoardDebugHook('localhost:6064')
+        ]
+        with tf.train.MonitoredTrainingSession(
+            checkpoint_dir=FLAGS.save_path, 
+            config=config_proto,
+            hooks=hooks) as session:
             for i in range(config.max_max_epoch):
                 lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
                 m.assign_lr(session, config.learning_rate * lr_decay)
@@ -428,9 +437,10 @@ def main(_):
             test_perplexity = run_epoch(session, mtest)
             print('Test perplexity: {:.3f}'.format(test_perplexity))
             
-            if FLAGS.save_path:
+            '''if FLAGS.save_path:
                 print('Saving model to {}'.format(FLAGS.save_path))
-                sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
+                session.
+                sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)'''
                 
 if __name__ == '__main__':
     tf.app.run()
