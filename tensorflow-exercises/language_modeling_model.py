@@ -7,6 +7,8 @@ import tensorflow as tf
 import tensorflow.contrib.seq2seq as tfseq2seq
 import tensorflow.contrib.cudnn_rnn as tfcudnn_rnn
 import tensorflow.contrib.rnn as tfrnn
+import tensorflow.contrib.estimator as tfestimator
+import tensorflow.contrib.lookup as tflookup
 import time
 import numpy as np
 
@@ -15,12 +17,14 @@ import language_modeling_utils
 
 from tensorflow.python.client import device_lib
 from tensorflow.python.debug.wrappers.hooks import TensorBoardDebugHook
+from sklearn.svm.libsvm import predict
 
 flags = tf.flags
 
 flags.DEFINE_string('model', 'small', "A type of model. Possible options are: small, medium, large.")
 flags.DEFINE_string('data_path', '/home/nishilab/Documents/python/virtual-envs/tensorflow/tensorflow-exercises/data', "Where the training/test data is stored.")
 flags.DEFINE_string('save_path', '/home/nishilab/Documents/python/model-storage/language-modeling/save', "Model output directory")
+flags.DEFINE_string('output_file', '/home/nishilab/Documents/python/model-storage/language-modeling/test-output.txt', "File where the words produced by test will be saved")
 flags.DEFINE_bool('use_fp16', False, "Train using 16 bits floats instead of 32 bits")
 flags.DEFINE_integer('num_gpus', 1, 
                      "If larger than 1, Grappler AutoParallel optimizer "
@@ -30,11 +34,24 @@ flags.DEFINE_string('rnn_mode', None,
                     "The low level implementation of lstm cell: one of CUDNN, "
                     "BASIC, and BLOCK, representing cudnn_lstm, basic_lstm, "
                     "and lstm_block_cell classes.")
+flags.DEFINE_string('optimizer', 'adam',
+                    "The optimizer to use: adam, adagrad, gradient-descent. "
+                    "Default is adam.")
 
 FLAGS = flags.FLAGS
 BASIC = 'basic'
 CUDNN = 'cudnn'
 BLOCK = 'block'
+
+TRAIN = 'training'
+VALIDATE = 'validate'
+TEST = 'test'
+
+OPTIMIZERS = {
+    'adam': tf.train.AdamOptimizer,
+    'adagrad': tf.train.AdagradOptimizer,
+    'gradient-descent': tf.train.GradientDescentOptimizer 
+    }
 
 def data_type():
     return tf.float16 if FLAGS.use_fp16 else tf.float32
@@ -49,10 +66,12 @@ class PTBInput(object):
         
 class PTBModel(object):
     
-    def __init__(self, is_training, config, input_):
-        self._is_training = is_training
+    def __init__(self, stage, config, input_):
+        self._is_training = stage == TRAIN
+        self._stage = stage
         self._input = input_
         self._rnn_params = None
+        self._words = None
         self._cell = None
         self.batch_size = input_.batch_size
         self.num_steps = input_.num_steps
@@ -63,10 +82,10 @@ class PTBModel(object):
             embedding = tf.get_variable('embedding', [vocab_size, size], dtype=data_type())
             inputs = tf.nn.embedding_lookup(embedding, input_.input_data)
         
-        if is_training and config.keep_prob < 1:
+        if self._is_training and config.keep_prob < 1:
             inputs = tf.nn.dropout(inputs, config.keep_prob)
         
-        output, state = self._build_rnn_graph(inputs, config, is_training)
+        output, state = self._build_rnn_graph(inputs, config, self._is_training)
         
         softmax_w = tf.get_variable(
             'softmax_w', 
@@ -85,17 +104,30 @@ class PTBModel(object):
             tf.ones([self.batch_size, self.num_steps], dtype=data_type()),
             average_across_timesteps=False,
             average_across_batch=True)
-            
+        
         self._cost = tf.reduce_sum(loss)
         self._final_state = state
         
-        if not is_training:
+        '''if stage == VALIDATE:
+            word_indexes = tf.argmax(logits, axis=2)
+            words = []
+            for row in word_indexes:
+                words.append([input_.vocabulary[x] for x in row])
+            self._words = words'''
+        
+        if stage == TEST:
+            self._words = tf.squeeze(tf.argmax(logits, axis=2))
+            
+            
+        if not self._is_training:
             return
         self._lr = tf.Variable(0.0, trainable=False)
-        tvars = tf.trainable_variables()
-        grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars), config.max_grad_norm)
-        optimizer = tf.train.GradientDescentOptimizer(self._lr)
-        self._train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=tf.train.get_or_create_global_step())
+        #tvars = tf.trainable_variables()
+        #grads, _ = tf.clip_by_global_norm(tf.gradients(self._cost, tvars), config.max_grad_norm)
+        optimizer = OPTIMIZERS[FLAGS.optimizer](self._lr)
+        optimizer = tfestimator.clip_gradients_by_norm(optimizer, config.max_grad_norm)
+        self._train_op = optimizer.minimize(self._cost, global_step=tf.train.get_or_create_global_step())
+        #self._train_op = optimizer.apply_gradients(zip(grads, tvars), global_step=tf.train.get_or_create_global_step())
         self._new_lr = tf.placeholder(tf.float32, shape=[], name='new_learning_rate')
         self._lr_update = tf.assign(self._lr, self._new_lr)
     
@@ -170,6 +202,9 @@ class PTBModel(object):
     def export_ops(self, name):
         self._name = name
         ops = {language_modeling_utils.with_prefix(self._name, 'cost'): self._cost}
+        if self._stage == TEST:
+            ops[language_modeling_utils.with_prefix(self._name, 'words')]=self._words
+        
         if self._is_training:
             ops.update(lr=self._lr, new_lr=self._new_lr, lr_update=self._lr_update)
             if self._rnn_params:
@@ -197,6 +232,8 @@ class PTBModel(object):
                     base_variable_scope='Model/RNN')
                 tf.add_to_collection(tf.GraphKeys.SAVEABLE_OBJECTS, params_saveable)
         self._cost = tf.get_collection_ref(language_modeling_utils.with_prefix(self._name, 'cost'))[0]
+        if self._stage == TEST:
+            self._words = tf.get_collection_ref(language_modeling_utils.with_prefix(self._name, 'words'))[0]
         num_replicas = FLAGS.num_gpus if self._name == 'Train' else 1
         self._initial_state = language_modeling_utils.import_state_tuples(self._initial_state, self._initial_state_name, num_replicas)
         self._final_state = language_modeling_utils.import_state_tuples(self._final_state, self._final_state_name, num_replicas)
@@ -216,6 +253,14 @@ class PTBModel(object):
     @property
     def final_state(self):
         return self._final_state
+    
+    @property
+    def words(self):
+        return self._words
+    
+    @property
+    def stage(self):
+        return self._stage
     
     @property
     def lr(self):
@@ -242,8 +287,8 @@ class SmallConfig(object):
     num_layers = 2
     num_steps = 20
     hidden_size = 200
-    max_epoch = 4
-    max_max_epoch = 13
+    max_epoch = 1
+    max_max_epoch = 1
     keep_prob = 1.0
     lr_decay = 0.5
     batch_size = 20
@@ -302,10 +347,11 @@ class TestConfig(object):
     rnn_mode = BLOCK
         
         
-def run_epoch(session, model, eval_op=None, verbose=False):
+def run_epoch(session, model, eval_op=None, verbose=False, vocabulary=None):
     
     start_time = time.time()
-    costs = 0.0
+    costs = 0.
+    predicted_words = ''
     iters = 0
     state = session.run(model.initial_state)
     
@@ -313,6 +359,9 @@ def run_epoch(session, model, eval_op=None, verbose=False):
         'cost': model.cost,
         'final_state': model.final_state
     }
+    
+    if model._stage == TEST:
+        fetches['words'] = model.words
     
     if eval_op is not None:
         fetches['eval_op'] = eval_op
@@ -326,6 +375,10 @@ def run_epoch(session, model, eval_op=None, verbose=False):
         vals = session.run(fetches, feed_dict)
         cost = vals['cost']
         state = vals['final_state']
+        if model.stage == TEST:
+            word = vocabulary[vals['words']]
+            word = word if word != '<eos>' else '\n'
+            predicted_words += ' ' + word
         
         costs += cost
         iters += model.input.num_steps
@@ -336,6 +389,10 @@ def run_epoch(session, model, eval_op=None, verbose=False):
                  np.exp(costs/iters),
                  iters * model.input.batch_size * max(1, FLAGS.num_gpus) / (time.time() - start_time)))
     
+    if model.stage == TEST:
+        with open(FLAGS.output_file, 'w') as file:
+            file.write(predicted_words)
+            
     return np.exp(costs / iters)
 
 def get_config():
@@ -372,7 +429,7 @@ def main(_):
         raise ValueError('Your machine only has {} gpus'.format(len(gpus)))
     
     raw_data = language_modeling_reader.ptb_raw_data(FLAGS.data_path)
-    train_data, valid_data, test_data, _ = raw_data
+    train_data, valid_data, test_data, vocabulary = raw_data
     
     config = get_config()
     eval_config = get_config()
@@ -385,19 +442,19 @@ def main(_):
         with tf.name_scope('Train'):
             train_input = PTBInput(config=config, data=train_data, name='TrainInput')
             with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                m = PTBModel(is_training=True, config=config, input_=train_input)
+                m = PTBModel(stage = TRAIN, config=config, input_=train_input)
             tf.summary.scalar('Training Loss', m.cost)
             tf.summary.scalar('Learning Rate', m.lr)
         
         with tf.name_scope('Valid'):
             valid_input = PTBInput(config=config, data=valid_data, name='ValidInput')
             with tf.variable_scope('Model', reuse=True, initializer=initializer):
-                mvalid = PTBModel(is_training=False, config=config, input_=valid_input)
+                mvalid = PTBModel(stage = VALIDATE, config=config, input_=valid_input)
             tf.summary.scalar('Validation Loss', mvalid.cost)
         with tf.name_scope('Test'):
             test_input = PTBInput(config=eval_config, data=test_data, name='TestInput')
             with tf.variable_scope('Model', reuse=True, initializer=initializer):
-                mtest = PTBModel(is_training=False, config=eval_config, input_=test_input)
+                mtest = PTBModel(stage=TEST, config=eval_config, input_=test_input)
                 
         models = {'Train': m, 'Valid': mvalid, 'Test': mtest}
         for name, model in models.items():
@@ -434,7 +491,7 @@ def main(_):
                 valid_perplexity = run_epoch(session, mvalid)
                 print('Epoch: {:d} Valid perplexity: {:.3f}'.format(i + 1, valid_perplexity))
             
-            test_perplexity = run_epoch(session, mtest)
+            test_perplexity = run_epoch(session, mtest, vocabulary=vocabulary)
             print('Test perplexity: {:.3f}'.format(test_perplexity))
             
             '''if FLAGS.save_path:

@@ -18,7 +18,7 @@ def _build_vocab(filename):
     count_pairs = sorted(counter.items(), key=lambda x: (-x[1], x[0]))
     words, _ = list(zip(*count_pairs))
     word_to_id = dict(zip(words, range(len(words))))
-    return word_to_id
+    return word_to_id, words
 
 def _file_to_word_ids(filename, word_to_id):
     data = _read_words(filename)
@@ -30,13 +30,13 @@ def ptb_raw_data(data_path=None):
     test_path = os.path.join(data_path, 'ptb.test.txt')
     valid_path = os.path.join(data_path, 'ptb.valid.txt')
     
-    word_to_id = _build_vocab(train_path)
+    word_to_id, words = _build_vocab(train_path)
     train_data = _file_to_word_ids(train_path, word_to_id)
     valid_data = _file_to_word_ids(valid_path, word_to_id)
     test_data = _file_to_word_ids(test_path, word_to_id)
     vocabulary = len(word_to_id)
     
-    return train_data, valid_data, test_data, vocabulary
+    return train_data, valid_data, test_data, words
 
 def ptb_producer(raw_data, batch_size, num_steps, name=None):
     
