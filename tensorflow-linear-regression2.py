@@ -14,7 +14,6 @@ from tensorflow.python.ops.metrics_impl import root_mean_squared_error
 from idlelib.pyparse import trans
 
 
-tf.logging.set_verbosity(tf.logging.ERROR)
 pd.options.display.max_rows = 10
 pd.options.display.float_format = '{:.1f}'.format
 california_housing_dataframe = pd.read_csv("https://storage.googleapis.com/mledu-datasets/california_housing_train.csv", sep=",")
