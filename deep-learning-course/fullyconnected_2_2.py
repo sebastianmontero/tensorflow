@@ -28,12 +28,13 @@ train_subset = 10000
 image_size = 28
 num_labels = 10
 num_steps = 801
+batch_size = 128
 
 graph = tf.Graph()
 
 with graph.as_default():
-    tf_train_dataset = tf.constant(train_dataset[:train_subset])
-    tf_train_labels = tf.constant(train_labels[:train_subset])
+    tf_train_dataset = tf.placeholder(tf.float32, shape = (batch_size, image_size * image_size))
+    tf_train_labels = tf.placeholder(tf.float32, shape = (batch_size, num_labels))
     tf_valid_dataset = tf.constant(valid_dataset)
     tf_test_dataset = tf.constant(test_dataset)
     
@@ -54,11 +55,20 @@ with tf.Session(graph=graph) as sess:
     print('Initialized')
     
     for step in range(num_steps):
-        _,l, predictions = sess.run([optimizer, loss, train_prediction])
+        
+        offset = (step * batch_size) % (train_dataset.shape[0] - batch_size)
+        batch_data = train_dataset[offset: offset + batch_size]
+        batch_labels = train_labels[offset: offset + batch_size]
+        
+        feed_dict = {
+            tf_train_dataset:batch_data,
+            tf_train_labels:batch_labels
+        }
+        _,l, predictions = sess.run([optimizer, loss, train_prediction], feed_dict = feed_dict)
         
         if (step % 100 == 0):
             print('Loss at step {}: {:.2f}'.format(step, l));
-            train_accuracy = accuracy(predictions, train_labels[:train_subset])
+            train_accuracy = accuracy(predictions, batch_labels)
             print('Training accuracy: {:.2f}%'.format(train_accuracy))
             valid_accuray = accuracy(valid_prediction.eval(), valid_labels)
             print('Validation accuracy: {:.2f}%'.format(valid_accuray))

@@ -117,24 +117,26 @@ def maybe_pickle(data_folders, min_num_images_per_class, force=False):
   
   return dataset_names
 
-def make_arrays(nb_rows, img_size, num_classes):
+def make_arrays(nb_rows, img_size, num_classes, convolution=False):
   if nb_rows:
-    dataset = np.ndarray((nb_rows, img_size ** 2), dtype=np.float32)
+    shape = (nb_rows, img_size, img_size, 1) if convolution else (nb_rows, img_size ** 2) 
+    dataset = np.ndarray(shape, dtype=np.float32)
     labels = np.ndarray((nb_rows, num_classes), dtype=np.float32)
   else:
     dataset, labels = None, None
   return dataset, labels
   
-def reshape_image(image_array, num_images):
-    return np.reshape(image_array, [num_images, -1])
+def reshape_image(image_array, num_images, image_size, convolution=False):
+    shape = [num_images, image_size, image_size, 1] if convolution else [num_images, -1] 
+    return np.reshape(image_array, shape)
 
 def reshape_label(labels, num_classes):
     return np.eye(10, dtype=np.float32)[labels]
 
-def merge_datasets(pickle_files, train_size, valid_size=0):
+def merge_datasets(pickle_files, train_size, valid_size=0, convolution=False):
   num_classes = len(pickle_files)
-  valid_dataset, valid_labels = make_arrays(valid_size, image_size, num_classes)
-  train_dataset, train_labels = make_arrays(train_size, image_size, num_classes)
+  valid_dataset, valid_labels = make_arrays(valid_size, image_size, num_classes, convolution)
+  train_dataset, train_labels = make_arrays(train_size, image_size, num_classes, convolution)
   vsize_per_class = valid_size // num_classes
   tsize_per_class = train_size // num_classes
    
@@ -150,13 +152,13 @@ def merge_datasets(pickle_files, train_size, valid_size=0):
         np.random.shuffle(letter_set)
         if valid_dataset is not None:
           valid_letter = letter_set[:vsize_per_class, :, :]
-          valid_dataset[start_v:end_v, :] = reshape_image(valid_letter, vsize_per_class)
+          valid_dataset[start_v:end_v, :] = reshape_image(valid_letter, vsize_per_class, image_size, convolution)
           valid_labels[start_v:end_v] = hot_classes[label]
           start_v += vsize_per_class
           end_v += vsize_per_class
                     
         train_letter = letter_set[vsize_per_class:end_l, :, :]
-        train_dataset[start_t:end_t, :] = reshape_image(train_letter, tsize_per_class)
+        train_dataset[start_t:end_t, :] = reshape_image(train_letter, tsize_per_class, image_size, convolution)
         train_labels[start_t:end_t] = hot_classes[label]
         start_t += tsize_per_class
         end_t += tsize_per_class
@@ -172,9 +174,11 @@ def randomize(dataset, labels):
   shuffled_labels = labels[permutation]
   return shuffled_dataset, shuffled_labels
     
-def maybe_pickle_final_dataset(train_datasets, test_datasets, train_size, valid_size, test_size,  force=False):
+def maybe_pickle_final_dataset(train_datasets, test_datasets, train_size, valid_size, test_size, convolution=False,  force=False):
     
-    pickle_file = os.path.join(data_root, 'notMNIST.pickle')
+    file_name = 'notMNIST-conv.pickle' if convolution else 'notMNIST.pickle'
+    
+    pickle_file = os.path.join(data_root, file_name)
 
     if os.path.exists(pickle_file) and not force:
         print('Final dataset pickle present, loading from pickle')
@@ -191,8 +195,8 @@ def maybe_pickle_final_dataset(train_datasets, test_datasets, train_size, valid_
     else:
         print('Final dataset not present, merging datasets')
         valid_dataset, valid_labels, train_dataset, train_labels = merge_datasets(
-            train_datasets, train_size, valid_size)
-        _, _, test_dataset, test_labels = merge_datasets(test_datasets, test_size)
+            train_datasets, train_size, valid_size, True)
+        _, _, test_dataset, test_labels = merge_datasets(test_datasets, test_size, convolution=convolution)
 
         train_dataset, train_labels = randomize(train_dataset, train_labels)
         test_dataset, test_labels = randomize(test_dataset, test_labels)
@@ -245,6 +249,6 @@ test_folders = maybe_extract(test_filename)
 train_datasets = maybe_pickle(train_folders, 45000)
 test_datasets = maybe_pickle(test_folders, 1800)
 
-train_dataset, train_labels, valid_dataset, valid_labels, test_dataset, test_labels = maybe_pickle_final_dataset(train_datasets, test_datasets, train_size, valid_size, test_size, True)
+train_dataset, train_labels, valid_dataset, valid_labels, test_dataset, test_labels = maybe_pickle_final_dataset(train_datasets, test_datasets, train_size, valid_size, test_size, True, True)
 print(train_labels)
 #train_linear(train_dataset, train_labels, valid_dataset, valid_labels)
