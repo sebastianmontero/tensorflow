@@ -71,7 +71,7 @@ with graph.as_default():
     loss = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits_v2(labels=tf_train_labels, logits=logits)) #+ l2_loss
     
     tf_global_step = tf.Variable(0, trainable=False)
-    learning_rate = tf.train.exponential_decay(starting_learning_rate, tf_global_step, decay_steps=100, decay_rate=1) 
+    learning_rate = tf.train.exponential_decay(starting_learning_rate, tf_global_step, decay_steps=100, decay_rate=0.98) 
     
     optimizer = tf.train.GradientDescentOptimizer(learning_rate).minimize(loss)
     
@@ -94,7 +94,7 @@ with tf.Session(graph=graph) as sess:
         feed_dict = {
             tf_train_dataset:batch_data,
             tf_train_labels:batch_labels,
-            tf_keep_probabilty: 0.5,
+            tf_keep_probabilty: 0.75,
             tf_global_step: step
         }
         _,l, predictions, lr = sess.run([optimizer, loss, train_predict, learning_rate], feed_dict = feed_dict)
